@@ -1,0 +1,100 @@
+---
+title: "Analysis"
+author: "Charlotte Wood"
+date: "2/19/2022"
+output: html_document
+---
+Data Exploration Assignment 
+
+Cleaning of Data 
+In order to clean my data I first started by removing all the duplicates. I knew that there was a unique keyword and name for each school per date that was unique, and so I removed all the duplicates that had the same school name by finding distinct names, month, and key words. I next decided to join that data (Trends) which had all the searches data, and merged it with IDnames, just to make sure that I had gotten rid of all the duplicates, as well as the schools with the name NA to get TrendsID. I then went and filtered the data to make sure we were just getting schools that primarily gave out bachelors degrees, and joined that data with the TrendsID data to get TrendIDBachelors. I then did the same thing but for the ID side, in a smaller database where I just had the IDs and University names, not the trends data, and made IdBachelors. I then had to decide on a measure for how I wanted to account for low and high earnings for graduates and decided on the "md_earn_wne_p10.REPORTED.EARNINGS" variable, which allowed for me to see the median income of graduates 10 years after they had graduated. I then combined that with the big data so each month had the earnings attached to it. I then created a binary variable of earnings, where high earnings was anything greater than $62,000 (explained why later). I realized that was too much data, so I then I decided I should focus on each month having its own index per school, and combined the earnings data with my ID data frame I was working with earlier, and grouped by month with a mean index for each month per school, and then standardized the means so that I could compare indexes later. I then dropped all months that were missing so that the data wouldn't be off later on, and exported the cleaned data here. Although I didn't need to keep in all these steps, I felt it was important to show why I decided to create monthly data instead, which was because the data was too big to do it weekly, as shown by TendsIdBachelorsEarnings. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(purrr)
+library(tidyverse)
+library(fs)
+library(jtools)
+library(readr)
+library(dplyr)
+library(ggplot2)
+CleanData<- read.csv("CleanData")
+```
+
+Before running the regression, it is important to understand why 62,000 was chosen to represent the cut off high and low earnings. The variable "md_earn_wne_p10.REPORTED.EARNINGS" is the reported earnings of each graduate after 10 years, it is not their immediate income. I made the assumption that the youngest you could be after graduating 10 years ago would be 30 (start when you are 16 through running start, gradate at 20, 10 years after that is 30). I then looked up what the top 25% earn, and found they only give you the numbers for people age 25 and 35. I then averaged these two numbers to get about 62,000. I choose to look in the top 25%, as I felt that is what is qualified high earnings. The median or mean income is nice, but if you want "high" earnings, you probably want to be in the top 25% of your age bracket.So I created a binary variable where 1 means you earn higher than 62,000 and  0 means you earn less than that. 
+
+Before I got to this point, I really analyzed what was being measured. I saw that time was the big factor, and that I had two different groups I wanted to compare to this time. I had created a binary variable at first with the intention of just doing a normal regression with an interaction term, but then realized since time was playing such a big effect and could be made binary, the actual equation would look like this: 
+Yit = B0 + B1After2015t + B2Earningsi + B3After2015tEarningsi + Eit
+Which is the same thing as a DID just with what the earnings represented. 
+I also graphed all the before for both high and low earnings schools, and saw they followed similar trends which meant I could use a DID. 
+
+```{r}
+DIDmeans <- CleanData %>% 
+  mutate(after = month >= as.Date('2015-09-01'),
+       treated = HighEarnings > 0)
+Means <- DIDmeans %>% 
+  group_by(after, treated) %>%
+  summarize(changeofindex = mean(index)) 
+  
+```
+For my regression, I decided to do a version of difference in difference. It can't be a traditional difference in difference due to the fact that there isn't a control group. However, I have decided to treat the low earnings group as the "false"/un-treated group. This means my difference in difference is going to show me the difference in how the score card release effected high and low earnings groups. September 2015 is being used as the after, as that is when the scorecard came out. 
+
+Here is how I would interpret each number: 
+44.18788 is the mean index of low earnings universities before September 2015
+45.20366 is the mean index of high earnings universities before September 2015
+39.83198 is the mean index of low earnings universities after September 2015, which shows the mean as well as the time effect 
+39.63443 is the mean index of high earnings universities after September 2015, which shows the mean as well as the time effect 
+
+Time Effect 
+```{r}
+39.83198 - 44.18788
+```
+
+Since I am using DID, I am assuming that this time effect would be the same for both high and low earnings groups. I am assuming this as the scorecard is the only thing that effected them, so index/how much people are going to look up each school would have been the same. This gives us the time effect, which means time had a negative impact by itself. 
+
+```{r}
+(39.63443 - 45.20366) - (39.83198 - 44.18788)
+
+```
+This gives the difference in difference, or the Treatment effect! This is saying that the ScoreCard being released negatively effected the search rates for high earnings schools compared to low earnings schools by 1.2133. This however just gives an estimate of the effect, and doesn't allow for standard errors. 
+
+```{r}
+OLS <- lm(index ~ after*treated, data = DIDmeans)
+export_summs(OLS, digits = 3)
+```
+
+
+I decided to run an OLS as well, as it will show us the same thing but with standard errors. Our intercept is the mean index before September 2015 for low earnings colleges. When looking at the AfterTrue, we are assuming "treated" is 0, which in this case means our income variable is 0, which means we are talking about low income earnings colleges after 2015, and their index actually decreased by about 4.356, which matches what we have when we did it manually. treatedTRUE is the difference between high and low income earnings colleges before 2015 when the scorecard came out, which high earnings colleges had a mean index of about 1.016 higher than lower earnings colleges. And the afterTRUE:treatedTRUE is our difference in difference. 
+
+To do this, I had to assume that there would be "no uncontrolled endogenous variation across this particular before/after time change". We can assume that this is true, as people would continue to search up schools regardless of if the scorecard came out or not. 
+
+The R2 number is very low, which means that is is likely that the score card being released is not a big explanation for the variance of indexs based on college earnings. This follow the trends in the graph below as well. 
+
+```{r pressure, echo=FALSE}
+graph <- DIDmeans %>% mutate(HighEarningsWord = ifelse(HighEarnings == 1, "High", "Low"))
+graph2 <- graph %>% group_by(month, HighEarnings)  %>% summarise(mean(index))
+graph2 <- graph2 %>% mutate(HighEarningsWord = ifelse(HighEarnings == 1, "High", "Low"))
+graph2  <- rename(graph2 , Index = 'mean(index)')
+graph2  <- rename(graph2 , Earnings = HighEarningsWord)
+graph2  <- rename(graph2 , Month = month)
+
+ggplot(data=subset(graph2 , Month > as.Date("2013-08-01")), 
+       aes(x=Month, y=Index, group = Earnings, color = Earnings))+
+  geom_line()+ 
+  geom_vline(xintercept = "2015-09-01")+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  ggtitle("Indexs Over Time Based on Earnings")
+```
+
+I decided to graph the mean index per month over time, separated by high and low income.When you look at the pre September 2015 side, you can see that my assumption of them matching before (parallel trends). When looking at this graph, there seems to be a negative effect in geral, as both high and low income lines are going down gradually. The score card doesn't seem to really have any effect on people searching high earning schools compared to low earnings schools. One thing this graph does show is that people are looking at schools much more often during specific months vs depending on what kind of earnings the school has. There is no pattern to these months either, which is interesting. 
+
+Overall, it seems like the scorecard did not have any effect on whether people looked up colleges based on high or low earnings. I think if you just looked at the DID numbers, you would say that it had a negative effect on people looking up colleges with high earnings versus those with low earnings. All though this is what the numbers say, when you look a the graph and think about it logically, both mean indexes are going down for high and low earnings. It went down less for low earnings schools, but both went down. I think that this is for a couple reasons. I don't believe that the scorecard really had any effect, as people didn't know about it. I think it wasn't well advertised, and as someone who was looking at colleges during this time, I had never heard about it. I also think that how much a person makes 10 years after graduating isn't the most important thing to potential students. So if people really did know what the score card was, they may not have cared about this particular variable. Things like financial aid and location of the school might play a bigger effect, and that could instead effect the indexs. I also think that the reason the index were going down in general is that people don't seem to really care about college websites, and are visiting them lest frequently. People are now aware that these websites are going to really only show them the best parts, and would rather visit the schools on tours to see what they are like. There is also social media now, and potential students are more likley to get their information from that than the website. 
+
+In conclusion, just looking at the OLS model, the college score card had a negative effect on index for high earnings colleges compared to lower earnings colleges for those giving primarily bachelors degrees. When one looks at the graph, they can see that there is a downwards trend for both high earnings colleges and low earnings colleges. One might think this is due to social media or to people wanting to see the campus in general. The impact of the Scorecard was not big, as we can tell from the DID analysis and graph since they show that although there was a negative effect on high earnings schools compared to low earnings schools, both were have less searches anyway, so the scorecard didn't help either. I don't think we can go as far as to say that it hurt their indexs, due to a low R2 as well as other outside factors that may have played a bigger part. 
+
